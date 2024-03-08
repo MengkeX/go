@@ -675,7 +675,10 @@ func (cr *connReader) startBackgroundRead() {
 }
 
 func (cr *connReader) backgroundRead() {
+	// discard byteBuf record
+	runtime.SetDelegatedFromGoRoutineId(-1)
 	n, err := cr.conn.rwc.Read(cr.byteBuf[:])
+	runtime.SetDelegatedFromGoRoutineId(0)
 	cr.lock()
 	if n == 1 {
 		cr.hasByte = true

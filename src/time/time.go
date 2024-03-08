@@ -1096,6 +1096,15 @@ func Now() Time {
 	return Time{hasMonotonic | uint64(sec)<<nsecShift | uint64(nsec), mono, Local}
 }
 
+// Now2 only use for replay
+func Now2() Time {
+	sec, nsec, mono := now()
+	sec += unixToInternal - minWall
+	if uint64(sec)>>33 != 0 {
+		return Time{uint64(nsec), sec + minWall, Local}
+	}
+	return Time{hasMonotonic | uint64(sec)<<nsecShift | uint64(nsec), mono, Local}
+}
 func unixTime(sec int64, nsec int32) Time {
 	return Time{uint64(nsec), sec + unixToInternal, Local}
 }

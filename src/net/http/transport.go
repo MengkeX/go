@@ -26,6 +26,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -452,10 +453,11 @@ func ProxyURL(fixedURL *url.URL) func(*Request) (*url.URL, error) {
 // optional extra headers to write and stores any error to return
 // from roundTrip.
 type transportRequest struct {
-	*Request                         // original request, not to be mutated
-	extra     Header                 // extra headers to write, or nil
-	trace     *httptrace.ClientTrace // optional
-	cancelKey cancelKey
+	*Request                                 // original request, not to be mutated
+	extra             Header                 // extra headers to write, or nil
+	trace             *httptrace.ClientTrace // optional
+	cancelKey         cancelKey
+	delegatedFromGoid int64 // goroutineID which delegate from
 
 	mu  sync.Mutex // guards err
 	err error      // first setError value for mapRoundTripError to consider
@@ -2391,6 +2393,7 @@ func (pc *persistConn) writeLoop() {
 	for {
 		select {
 		case wr := <-pc.writech:
+			runtime.SetDelegatedFromGoRoutineId(wr.req.delegatedFromGoid)
 			startBytesWritten := pc.nwrite
 			err := wr.req.Request.write(pc.bw, pc.isProxy, wr.req.extra, pc.waitForContinue(wr.continueCh))
 			if bre, ok := err.(requestBodyReadError); ok {
@@ -2416,9 +2419,11 @@ func (pc *persistConn) writeLoop() {
 			wr.ch <- err         // to the roundTrip function
 			if err != nil {
 				pc.close(err)
+				runtime.SetDelegatedFromGoRoutineId(0)
 				return
 			}
 		case <-pc.closech:
+			runtime.SetDelegatedFromGoRoutineId(0)
 			return
 		}
 	}
@@ -2484,7 +2489,9 @@ type requestAndChan struct {
 	// to writeLoop via this chan.
 	continueCh chan<- struct{}
 
-	callerGone <-chan struct{} // closed when roundTrip caller has returned
+	callerGone        <-chan struct{} // closed when roundTrip caller has returned
+	delegatedFromGoid int64           // goroutineID which delegate from
+
 }
 
 // A writeRequest is sent by the caller's goroutine to the
@@ -2608,6 +2615,8 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 		addedGzip:  requestedGzip,
 		continueCh: continueCh,
 		callerGone: gone,
+
+		delegatedFromGoid: req.delegatedFromGoid,
 	}
 
 	var respHeaderTimer <-chan time.Time
